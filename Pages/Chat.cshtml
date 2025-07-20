@@ -1,0 +1,135 @@
+﻿@page
+@model SignalRChat.Pages.ChatModel
+@{
+    ViewData["Title"] = "Chat";
+}
+
+<h1>SignalR Chat</h1>
+
+<div>
+    <label>User Name:</label>
+    <input type="text" id="userInput" placeholder="Enter your name" />
+</div>
+<div>
+    <label>Group Name:</label>
+    <input type="text" id="groupInput" placeholder="Enter group name" />
+    <button onclick="joinGroup()">Join Group</button>
+    <button onclick="leaveGroup()">Leave Group</button>
+</div>
+<div>
+    <label>Active Groups:</label>
+    <select id="activeGroups" onchange="selectGroup()">
+        <option value="">Select a group</option>
+    </select>
+    <button onclick="getActiveGroups()">Refresh Groups</button>
+</div>
+<div>
+    <label>Message:</label>
+    <input type="text" id="messageInput" placeholder="Type a message" />
+    <button onclick="sendMessage()">Send to All</button>
+    <button onclick="sendMessageToGroup()">Send to Group</button>
+</div>
+<ul id="messagesList"></ul>
+
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/chatHub")
+            .build();
+
+        connection.on("ReceiveMessage", (user, message) => {
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const li = document.createElement("li");
+            li.textContent = `(${now}) ${user}: ${message}`;
+            document.getElementById("messagesList").appendChild(li);
+        });
+
+        connection.on("ReceiveGroupList", (groups) => {
+            const select = document.getElementById("activeGroups");
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            groups.forEach(group => {
+                const option = document.createElement("option");
+                option.value = group;
+                option.textContent = group;
+                select.appendChild(option);
+            });
+        });
+
+        connection.on("ReceiveHistory", (groupName, messages) => {
+            const list = document.getElementById("messagesList");
+            list.innerHTML = ""; // Clear existing messages
+            const header = document.createElement("li");
+            header.textContent = groupName ? `History for group: ${groupName}` : "Global Chat History";
+            header.style.fontWeight = "bold";
+            list.appendChild(header);
+            messages.forEach(msg => {
+                const timestamp = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const li = document.createElement("li");
+                li.textContent = `(${timestamp}) ${msg.user}: ${msg.message}`;
+                list.appendChild(li);
+            });
+        });
+
+        connection.start()
+            .then(() => {
+                connection.invoke("GetChatHistory").catch(err => console.error(err));
+                connection.invoke("GetActiveGroups").catch(err => console.error(err));
+            })
+            .catch(err => console.error(err));
+
+        function sendMessage() {
+            const user = document.getElementById("userInput").value;
+            const message = document.getElementById("messageInput").value;
+            if (user && message) {
+                connection.invoke("SendMessage", user, message).catch(err => console.error(err));
+                document.getElementById("messageInput").value = "";
+            }
+        }
+
+        function joinGroup() {
+            const groupName = document.getElementById("groupInput").value;
+            const user = document.getElementById("userInput").value;
+            if (groupName && user) {
+                connection.invoke("JoinGroup", groupName, user).catch(err => console.error(err));
+                document.getElementById("groupInput").value = "";
+            }
+        }
+
+        function sendMessageToGroup() {
+            const groupName = document.getElementById("groupInput").value;
+            const user = document.getElementById("userInput").value;
+            const message = document.getElementById("messageInput").value;
+            if (groupName && user && message) {
+                connection.invoke("SendMessageToGroup", groupName, user, message).catch(err => console.error(err));
+                document.getElementById("messageInput").value = "";
+            }
+        }
+
+        function leaveGroup() {
+            const groupName = document.getElementById("groupInput").value;
+            const user = document.getElementById("userInput").value;
+            if (groupName && user) {
+                connection.invoke("LeaveGroup", groupName, user).catch(err => console.error(err));
+                document.getElementById("groupInput").value = "";
+            }
+        }
+
+        function getActiveGroups() {
+            connection.invoke("GetActiveGroups").catch(err => console.error(err));
+        }
+
+        function selectGroup() {
+            const select = document.getElementById("activeGroups");
+            const groupName = select.value;
+            if (groupName) {
+                document.getElementById("groupInput").value = groupName;
+                connection.invoke("GetChatHistory", groupName).catch(err => console.error(err));
+            } else {
+                connection.invoke("GetChatHistory").catch(err => console.error(err));
+            }
+        }
+    </script>
+}
