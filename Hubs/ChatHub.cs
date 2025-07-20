@@ -23,7 +23,7 @@ namespace SignalRChat.Hubs
 
         public async Task SendMessage(string user, string message)
         {
-            await DB_SaveChanges(message);
+            await DB_SaveChanges(message, user: user); // Save with the actual user
             await Clients.All.SendAsync("ReceiveMessage", user, message);
         }
 
@@ -32,17 +32,15 @@ namespace SignalRChat.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
 
             string systemMessage = $"{user} has joined the group {groupName}.";
-
-            await DB_SaveChanges(systemMessage, groupName);
+            await DB_SaveChanges(systemMessage, groupName); // System message
 
             await Clients.Group(groupName).SendAsync("ReceiveMessage", "System", systemMessage);
 
             userGroups.AddOrUpdate(
                 Context.ConnectionId,
-                key => new ConcurrentBag<string> { groupName }, // Add if not present
+                key => new ConcurrentBag<string> { groupName },
                 (key, existingBag) =>
                 {
-                    // Avoid adding duplicate groups
                     if (!existingBag.Contains(groupName))
                     {
                         existingBag.Add(groupName);
@@ -51,15 +49,13 @@ namespace SignalRChat.Hubs
                 });
 
             UpdateGroups(groupName, true);
-
             await GroupsHaveBeenUpdated();
-
             await SendGroupHistory(groupName);
         }
 
         public async Task SendMessageToGroup(string groupName, string user, string message)
         {
-            await DB_SaveChanges(message, groupName);
+            await DB_SaveChanges(message, groupName, user); // Save with the actual user
             await Clients.Group(groupName).SendAsync("ReceiveMessage", user, message);
         }
 
@@ -70,44 +66,36 @@ namespace SignalRChat.Hubs
                 foreach (var groupName in groupBag)
                 {
                     string systemMessage = $"A user has disconnected from {groupName}.";
-                    await DB_SaveChanges(systemMessage, groupName);
+                    await DB_SaveChanges(systemMessage, groupName); // System message
                     await Clients.Group(groupName).SendAsync("ReceiveMessage", "System", systemMessage);
                     UpdateGroups(groupName, false);
                 }
                 userGroups.TryRemove(Context.ConnectionId, out _);
-
                 await GroupsHaveBeenUpdated();
             }
             else
             {
                 string systemMessage = $"A user has disconnected globally.";
-                await DB_SaveChanges(systemMessage);
+                await DB_SaveChanges(systemMessage); // System message
                 await Clients.All.SendAsync("ReceiveMessage", "System", systemMessage);
             }
-
             await base.OnDisconnectedAsync(exception);
         }
 
         public async Task LeaveGroup(string groupName, string user)
         {
             string systemMessage = $"{user} has left the group {groupName}.";
-            await DB_SaveChanges(systemMessage, groupName);
+            await DB_SaveChanges(systemMessage, groupName); // System message
 
-            await Clients.Group(groupName).SendAsync("ReceiveMessage", systemMessage);
+            await Clients.Group(groupName).SendAsync("ReceiveMessage", "System", systemMessage); // Fix to use "System" prefix
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
 
             if (userGroups.TryGetValue(Context.ConnectionId, out var groupBag))
             {
-                // Locking is needed since ConcurrentBag is not thread-safe for removing
                 lock (groupBag)
                 {
-                    // Remove the group from the bag (requires creating a new bag since ConcurrentBag doesn't support removal)
                     var updatedBag = new ConcurrentBag<string>(groupBag.Where(g => g != groupName));
-
-                    // Replace the bag
                     userGroups[Context.ConnectionId] = updatedBag;
-
-                    // If empty, remove the whole connection
                     if (updatedBag.IsEmpty)
                     {
                         userGroups.TryRemove(Context.ConnectionId, out _);
@@ -116,7 +104,6 @@ namespace SignalRChat.Hubs
             }
 
             UpdateGroups(groupName, false);
-
             await GroupsHaveBeenUpdated();
         }
 
@@ -148,22 +135,21 @@ namespace SignalRChat.Hubs
         }
 
         // Database Storing/Updating
-        private async Task DB_SaveChanges(string systemMessage, string groupName = "")
+        private async Task DB_SaveChanges(string message, string groupName = "", string user = "System")
         {
             var chatMessage = new ChatMessage
             {
-                User = "System",
-                Message = systemMessage,
+                User = user,
+                Message = message,
                 Timestamp = DateTime.UtcNow,
-                GroupName = groupName == "" ? null : groupName
+                GroupName = string.IsNullOrEmpty(groupName) ? null : groupName
             };
             _dbContext.ChatMessages.Add(chatMessage);
             await _dbContext.SaveChangesAsync();
         }
 
         // Get Chat History
-        // New method to retrieve chat history for global or group messages
-        public async Task GetChatHistory(string groupName = "")
+        public async Task GetChatHistory(string groupName = null)
         {
             var query = _dbContext.ChatMessages
                 .Where(m => m.GroupName == groupName) // null for global, specific groupName for group messages

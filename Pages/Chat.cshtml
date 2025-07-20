@@ -94,7 +94,7 @@
             const user = document.getElementById("userInput").value;
             if (groupName && user) {
                 connection.invoke("JoinGroup", groupName, user).catch(err => console.error(err));
-                document.getElementById("groupInput").value = "";
+                // Removed: document.getElementById("groupInput").value = ""; // To keep the group name (TODO: Should store current group somewhere in the ChatHub.cs)
             }
         }
 
